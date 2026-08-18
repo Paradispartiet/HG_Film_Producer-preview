@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   repository_dispatch:
     types: [publish-preview]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/pages.yml
 
 permissions:
   contents: read
@@ -39,6 +43,14 @@ jobs:
           fi
           ! grep -R -F '/HG_Film_Producer/' --include='*.html' --include='*.js' --include='*.css' .
           touch .nojekyll
+      - name: Ensure Pages is enabled for Actions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1 || \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow >/dev/null
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site
