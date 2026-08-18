@@ -1,0 +1,146 @@
+name: Bootstrap protected public previews
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-admin.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ADMIN_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+    steps:
+      - name: Require temporary admin credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ADMIN_TOKEN:-}" ]]; then
+            echo 'REPO_ADMIN_TOKEN is not configured in the bootstrap repository.' >&2
+            exit 1
+          fi
+
+      - name: Ensure private source Actions are enabled
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          sources=(
+            Paradispartiet/HG_Film_Producer
+            Paradispartiet/HistoryGo-FootballManager
+            Paradispartiet/History-Go
+          )
+          for repo in "${sources[@]}"; do
+            gh api --method PUT "repos/${repo}/actions/permissions" \
+              -F enabled=true \
+              -f allowed_actions=all >/dev/null
+            echo "Actions enabled: ${repo}"
+          done
+
+      - name: Enable GitHub Pages for public preview repositories
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          previews=(
+            Paradispartiet/HG_Film_Producer-preview
+            Paradispartiet/HistoryGo-FootballManager-preview
+            Paradispartiet/History-Go-preview
+          )
+          for repo in "${previews[@]}"; do
+            if gh api "repos/${repo}/pages" >/dev/null 2>&1; then
+              gh api --method PUT "repos/${repo}/pages" -f build_type=workflow >/dev/null
+              echo "Pages configured: ${repo}"
+            else
+              gh api --method POST "repos/${repo}/pages" -f build_type=workflow >/dev/null
+              echo "Pages created: ${repo}"
+            fi
+          done
+
+      - name: Install publisher credential in private source repositories
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          sources=(
+            Paradispartiet/HG_Film_Producer
+            Paradispartiet/HistoryGo-FootballManager
+            Paradispartiet/History-Go
+          )
+          for repo in "${sources[@]}"; do
+            gh secret set PUBLIC_DEPLOY_TOKEN --repo "$repo" --body "$ADMIN_TOKEN"
+            echo "PUBLIC_DEPLOY_TOKEN installed: ${repo}"
+          done
+
+      - name: Trigger preview deployments
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          previews=(
+            Paradispartiet/HG_Film_Producer-preview
+            Paradispartiet/HistoryGo-FootballManager-preview
+            Paradispartiet/History-Go-preview
+          )
+          for repo in "${previews[@]}"; do
+            gh api --method POST "repos/${repo}/dispatches" -f event_type=publish-preview >/dev/null
+            echo "Deploy dispatched: ${repo}"
+          done
+
+      - name: Verify all public previews
+        shell: bash
+        run: |
+          set -euo pipefail
+          urls=(
+            https://paradispartiet.github.io/HG_Film_Producer-preview/
+            https://paradispartiet.github.io/HistoryGo-FootballManager-preview/
+            https://paradispartiet.github.io/History-Go-preview/
+          )
+          for url in "${urls[@]}"; do
+            ok=false
+            for attempt in $(seq 1 60); do
+              if curl --location --fail --silent --max-time 20 "${url}source-sha.txt" >/dev/null 2>&1; then
+                ok=true
+                break
+              fi
+              sleep 5
+            done
+            if [[ "$ok" != true ]]; then
+              echo "Preview unavailable: ${url}" >&2
+              exit 1
+            fi
+            echo "Preview verified: ${url}"
+          done
+
+      - name: Record successful bootstrap
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          body="{\"status\":\"success\",\"run_id\":\"${GITHUB_RUN_ID}\"}"
+          encoded="$(printf '%s\n' "$body" | base64 -w0)"
+          gh api --method PUT \
+            "repos/${GITHUB_REPOSITORY}/contents/.bootstrap-success-${GITHUB_RUN_ID}.json" \
+            -f message="Record preview bootstrap success ${GITHUB_RUN_ID}" \
+            -f content="$encoded" >/dev/null
+
+      - name: Remove temporary admin secret from public repository
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh secret delete REPO_ADMIN_TOKEN --repo "$GITHUB_REPOSITORY"
+          echo 'Temporary public bootstrap secret removed.'
