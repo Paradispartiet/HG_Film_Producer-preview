@@ -1,0 +1,57 @@
+name: Deploy Film Producer preview
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [publish-preview]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: hg-film-producer-preview-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout published snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: site
+      - name: Verify snapshot
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+        run: |
+          set -euo pipefail
+          test -f index.html
+          test -d assets
+          test -f source-sha.txt
+          test -f source-ref.txt
+          actual="$(cat source-sha.txt)"
+          if [[ "$EVENT_NAME" == "repository_dispatch" && -n "$EXPECTED_SOURCE_SHA" ]]; then
+            test "$actual" = "$EXPECTED_SOURCE_SHA"
+          fi
+          ! grep -R -F '/HG_Film_Producer/' --include='*.html' --include='*.js' --include='*.css' .
+          touch .nojekyll
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
