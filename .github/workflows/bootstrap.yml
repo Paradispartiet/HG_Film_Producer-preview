@@ -1,0 +1,48 @@
+name: Bootstrap Film Producer preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build site branch from current production snapshot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Paradispartiet/Paradispartiet.github.io.git production
+          mkdir snapshot
+          cp -a production/HG_Film_Producer/. snapshot/
+          python - <<'PY'
+          from pathlib import Path
+          exts={'.html','.js','.css','.json','.svg','.txt','.webmanifest'}
+          for p in Path('snapshot').rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in exts: continue
+              try: text=p.read_text('utf-8')
+              except UnicodeDecodeError: continue
+              new=text.replace('/HG_Film_Producer/','/HG_Film_Producer-preview/')
+              if new != text: p.write_text(new,'utf-8')
+          PY
+          git -C production rev-parse HEAD > snapshot/source-sha.txt
+          printf '%s\n' 'production-bootstrap' > snapshot/source-ref.txt
+          touch snapshot/.nojekyll
+          cd snapshot
+          git init -b site
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add .
+          git commit -m 'preview: bootstrap from production'
+          git push --force origin site
+          source_sha="$(cat source-sha.txt)"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" -f event_type=publish-preview -f "client_payload[source_sha]=$source_sha"
