@@ -1,0 +1,27 @@
+name: Pages diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attempt Pages enablement and inspect status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1 || \
+            gh api --include --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow || true
+          gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '{html_url,status,build_type}' || true
+          url='https://paradispartiet.github.io/HG_Film_Producer-preview/'
+          code="$(curl --location --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 "$url" || true)"
+          echo "HTTP $code $url"
