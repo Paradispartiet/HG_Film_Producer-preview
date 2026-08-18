@@ -1,17 +1,29 @@
 name: Public Actions probe
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - agent/public-actions-probe-2026-08-18
     paths:
       - .github/workflows/actions-probe.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Confirm public runner
-        run: echo 'public-actions-ok'
+      - name: Record public runner success
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body="public-actions-ok ${GITHUB_RUN_ID} ${GITHUB_SHA}\n"
+          encoded="$(printf '%s' "$body" | base64 -w0)"
+          gh api --method PUT \
+            "repos/${GITHUB_REPOSITORY}/contents/.actions-probe-success.txt" \
+            -f message="Record public Actions probe ${GITHUB_RUN_ID}" \
+            -f content="$encoded" \
+            -f branch="${GITHUB_REF_NAME}" >/dev/null
